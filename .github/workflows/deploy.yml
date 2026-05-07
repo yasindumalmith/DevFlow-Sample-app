@@ -1,0 +1,105 @@
+name: Deploy to DevFlow Environment
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment_name:
+        description: 'Target namespace name'
+        required: true
+        type: string
+      image_tag:
+        description: 'Docker image tag to deploy'
+        required: true
+        type: string
+        default: 'latest'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Build JAR
+        run: mvn clean package -DskipTests
+
+      - name: Build Docker image
+        run: |
+          docker build -t devflow-sample-app:${{ inputs.image_tag }} .
+
+      - name: Push to Docker Hub
+        run: |
+          echo "${{ secrets.DOCKER_PASSWORD }}" | \
+            docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+          docker tag devflow-sample-app:${{ inputs.image_tag }} \
+            ${{ secrets.DOCKER_USERNAME }}/devflow-sample-app:${{ inputs.image_tag }}
+          docker push \
+            ${{ secrets.DOCKER_USERNAME }}/devflow-sample-app:${{ inputs.image_tag }}
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG_DATA }}" | base64 -d > ~/.kube/config
+
+      - name: Deploy to namespace
+        run: |
+          kubectl apply -f - <<EOF
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: sample-app
+            namespace: ${{ inputs.environment_name }}
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: sample-app
+            template:
+              metadata:
+                labels:
+                  app: sample-app
+              spec:
+                containers:
+                - name: sample-app
+                  image: ${{ secrets.DOCKER_USERNAME }}/devflow-sample-app:${{ inputs.image_tag }}
+                  ports:
+                  - containerPort: 8080
+                  env:
+                  - name: APP_ENVIRONMENT
+                    value: "${{ inputs.environment_name }}"
+                  resources:
+                    requests:
+                      cpu: "100m"
+                      memory: "128Mi"
+                    limits:
+                      cpu: "200m"
+                      memory: "256Mi"
+          ---
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: sample-app
+            namespace: ${{ inputs.environment_name }}
+          spec:
+            selector:
+              app: sample-app
+            ports:
+            - port: 80
+              targetPort: 8080
+          EOF
+
+      - name: Verify deployment
+        run: |
+          kubectl rollout status deployment/sample-app \
+            -n ${{ inputs.environment_name }} \
+            --timeout=120s

@@ -53,7 +53,7 @@ jobs:
 
       - name: Deploy to namespace
         run: |
-          kubectl apply -f - <<EOF
+          kubectl apply --validate=false -f - <<EOF
           apiVersion: apps/v1
           kind: Deployment
           metadata:

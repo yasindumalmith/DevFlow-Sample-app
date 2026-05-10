@@ -43,6 +43,13 @@ jobs:
           docker push \
             ${{ secrets.DOCKER_USERNAME }}/devflow-sample-app:${{ inputs.image_tag }}
 
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
       - name: Set up kubectl
         uses: azure/setup-kubectl@v3
 
@@ -50,6 +57,12 @@ jobs:
         run: |
           mkdir -p ~/.kube
           echo "${{ secrets.KUBECONFIG_DATA }}" | base64 -d > ~/.kube/config
+
+      - name: Update kubeconfig for EKS
+        run: |
+          aws eks update-kubeconfig \
+            --region ${{ secrets.AWS_REGION }} \
+            --name devflow-cluster
 
       - name: Deploy to namespace
         run: |
